@@ -14,6 +14,7 @@ Rules:
 - Never leave image_prompt empty
 - No explanation
 - Only valid JSON
+- Do NOT include children, kids, minors in the story or image prompts
 
 Format:
 {
@@ -69,8 +70,8 @@ def run():
     print("\nParsed:", scenes)
 
     for i, scene in enumerate(scenes, 1):
-        base_character = "same yellow toy robot, square head, big black eyes, small smile, thin limbs, glossy plastic"
-        style = "3D cartoon, studio light, plain background"
+        base_character = "one single yellow toy robot, centered, full body, large, occupying most of the frame"
+        style = "3D cartoon, studio lighting, plain background, no other objects"
 
         prompt = f"{base_character}, {style}, {scene['image_prompt']}"
 

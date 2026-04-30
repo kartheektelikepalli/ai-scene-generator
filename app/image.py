@@ -1,63 +1,64 @@
 import torch
 import os
-from PIL import Image
-import numpy as np
-import cv2
+from diffusers import StableDiffusionPipeline
+from diffusers.utils import load_image
 
-from diffusers import (
-    StableDiffusionControlNetPipeline,
-    ControlNetModel
-)
-
-# ---- LOAD MODELS ----
-controlnet = ControlNetModel.from_pretrained(
-    "lllyasviel/sd-controlnet-canny"
-)
-
-pipe = StableDiffusionControlNetPipeline.from_pretrained(
+# ---- LOAD PIPELINE ----
+pipe = StableDiffusionPipeline.from_pretrained(
     "runwayml/stable-diffusion-v1-5",
-    controlnet=controlnet
+    torch_dtype=torch.float32
 )
 
-pipe = pipe.to("mps")  # Mac GPU
+pipe = pipe.to("mps")
 
-# ---- EDGE DETECTOR ----
-def create_canny(image: Image.Image):
-    image = np.array(image)
-    edges = cv2.Canny(image, 100, 200)
-    edges = np.stack([edges]*3, axis=-1)
-    return Image.fromarray(edges)
+# ---- OPTIMIZATION ----
+pipe.enable_attention_slicing()
+pipe.vae.enable_slicing()
 
-# ---- MAIN FUNCTION ----
+# ---- LOAD IP-ADAPTER ----
+pipe.load_ip_adapter(
+    "h94/IP-Adapter",
+    subfolder="models",
+    weight_name="ip-adapter_sd15.bin"
+)
+
+# ---- LOAD REFERENCE IMAGE ----
+ref_image = load_image("assets/robot.png")
+
+
 def generate_image(prompt: str, idx: int):
     os.makedirs("output/images", exist_ok=True)
 
-    generator = torch.Generator(device="mps").manual_seed(42)
-
-    # Scene chaining
-    if idx == 1:
-        base = Image.new("RGB", (768, 768), "gray")  # NOT white
-    else:
-        base = Image.open(f"output/images/scene_{idx-1}.png")
-
-    control_image = create_canny(base)
+    generator = torch.Generator(device="mps").manual_seed(42 + idx)
 
     full_prompt = f"""
-    single small yellow robot,
-    round head,
-    big black eyes,
-    cartoon style,
-    clean background,
-    centered,
-    {prompt}
-    """
+        same robot as reference image,
+        yellow and white humanoid robot,
+        round rectangular head,
+        two large blue circular eyes,
+        smooth plastic body,
+        short limbs, rounded joints,
+        consistent character design,
+
+        {prompt},
+
+        cinematic lighting, 3D render, high quality
+        """
+    negative_prompt = """
+        different robot, multiple robots, different character,
+        blue robot, red robot, humanoid variation,
+        extra limbs, deformed, mutated,
+        blurry, low quality
+        """
 
     image = pipe(
         prompt=full_prompt,
-        image=control_image,
-        negative_prompt="multiple robots, duplicate, deformed, realistic human, messy background",
+        negative_prompt=negative_prompt,
+        ip_adapter_image=ref_image,
         num_inference_steps=30,
-        generator=generator
+        guidance_scale=7.5,
+        generator=generator,
+        cross_attention_kwargs={"scale": 0.75}  # 🔥 KEY FIX
     ).images[0]
 
     path = f"output/images/scene_{idx}.png"

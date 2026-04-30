@@ -1,54 +1,64 @@
-from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 import torch
 import os
 from PIL import Image
+import numpy as np
+import cv2
 
-# 🔥 Load BOTH pipelines
-text2img_pipe = StableDiffusionPipeline.from_pretrained(
-    "runwayml/stable-diffusion-v1-5"
-).to("mps")
+from diffusers import (
+    StableDiffusionControlNetPipeline,
+    ControlNetModel
+)
 
-img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-    "runwayml/stable-diffusion-v1-5"
-).to("mps")
+# ---- LOAD MODELS ----
+controlnet = ControlNetModel.from_pretrained(
+    "lllyasviel/sd-controlnet-canny"
+)
 
-NEGATIVE = """
-multiple robots, duplicate, extra limbs, extra head, deformed,
-mutated, different character, blurry, low quality, cropped, cut off
-"""
+pipe = StableDiffusionControlNetPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    controlnet=controlnet
+)
 
+pipe = pipe.to("mps")  # Mac GPU
+
+# ---- EDGE DETECTOR ----
+def create_canny(image: Image.Image):
+    image = np.array(image)
+    edges = cv2.Canny(image, 100, 200)
+    edges = np.stack([edges]*3, axis=-1)
+    return Image.fromarray(edges)
+
+# ---- MAIN FUNCTION ----
 def generate_image(prompt: str, idx: int):
     os.makedirs("output/images", exist_ok=True)
 
     generator = torch.Generator(device="mps").manual_seed(42)
 
-    # 🔥 Add strong style anchor
-    full_prompt = f"cartoon robot character, yellow body, clean design, {prompt}"
-
+    # Scene chaining
     if idx == 1:
-        # ✅ TRUE generation (text → image)
-        image = text2img_pipe(
-            full_prompt,
-            negative_prompt=NEGATIVE,
-            height=768,
-            width=768,
-            num_inference_steps=30,
-            guidance_scale=7.5,
-            generator=generator
-        ).images[0]
-
+        base = Image.new("RGB", (768, 768), "gray")  # NOT white
     else:
-        # ✅ Maintain consistency using previous image
-        init_image = Image.open(f"output/images/scene_{idx-1}.png").resize((768, 768))
+        base = Image.open(f"output/images/scene_{idx-1}.png")
 
-        image = img2img_pipe(
-            full_prompt,
-            image=init_image,
-            strength=0.75,
-            guidance_scale=7.5,
-            negative_prompt=NEGATIVE,
-            generator=generator
-        ).images[0]
+    control_image = create_canny(base)
+
+    full_prompt = f"""
+    single small yellow robot,
+    round head,
+    big black eyes,
+    cartoon style,
+    clean background,
+    centered,
+    {prompt}
+    """
+
+    image = pipe(
+        prompt=full_prompt,
+        image=control_image,
+        negative_prompt="multiple robots, duplicate, deformed, realistic human, messy background",
+        num_inference_steps=30,
+        generator=generator
+    ).images[0]
 
     path = f"output/images/scene_{idx}.png"
     image.save(path)

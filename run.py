@@ -37,9 +37,27 @@ Story: A robot learns emotions.
 """
 
 def extract_json(text: str):
-    match = re.search(r"\{.*\}", text, re.DOTALL)
+    text = text.strip()
+
+    # Case 1: Already valid JSON list
+    if text.startswith("["):
+        return '{"scenes": ' + text + '}'
+
+    # Case 2: Already correct format
+    if text.startswith("{"):
+        return text
+
+    # Case 3: Extract JSON from noisy text
+    match = re.search(r"\[.*\]|\{.*\}", text, re.DOTALL)
     if match:
-        return match.group(0)
+        extracted = match.group(0)
+
+        # If it's a list → wrap it
+        if extracted.startswith("["):
+            return '{"scenes": ' + extracted + '}'
+
+        return extracted
+
     raise ValueError("No JSON found")
 
 def run():
